@@ -4,7 +4,7 @@
 * 이메일 : hglee67@kopo.ac.kr
 * 빅데이터학과 입학 상담 오픈채팅방 : https://open.kakao.com/o/gEd0JIad
 
-##주요 실습 내용
+## 주요 실습 내용
 
 1. Tessract를 이용하여 이미지의 객체 인식하기
 2. Komoran을 이용하여 형태소 분석 및 명사 추출하기
