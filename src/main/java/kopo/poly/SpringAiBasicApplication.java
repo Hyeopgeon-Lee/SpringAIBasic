@@ -8,25 +8,31 @@ import kopo.poly.service.IOcrService;
 import kopo.poly.service.IStudentService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.UUID;
 
 @Slf4j
 @RequiredArgsConstructor
 @SpringBootApplication
 public class SpringAiBasicApplication implements CommandLineRunner {
 
-    // @Service 정의된 자바 파일
-    // Spring Frameworks 실행될 때, @Service 정의한 자바는 자동으로 메모리에 올림
-    // 메모리에 올라간 OcrService 객체를 ocrService 변수에 객체를 넣어주기
-    private final IOcrService ocrService; // 이미지 인식
-
-    private final INlpService nlpService; // 자연어 처리
-
+    // Spring creates the @Service implementations and injects them here.
+    private final IOcrService ocrService;
+    private final INlpService nlpService;
     private final IStudentService studentService;
+
+    @Value("${demo.mode:none}")
+    private String demoMode;
 
     public static void main(String[] args) {
         SpringApplication.run(SpringAiBasicApplication.class, args);
@@ -34,114 +40,83 @@ public class SpringAiBasicApplication implements CommandLineRunner {
 
     @Override
     public void run(String... args) throws Exception {
+        // Students explicitly select the example they want to run.
+        switch (demoMode.toLowerCase(Locale.ROOT)) {
+            case "none" -> log.info("실습 모드가 선택되지 않았습니다. --demo.mode=nlp 등을 지정하세요.");
+            case "nlp" -> runNlpDemo("한국폴리텍대학에서 인공지능과 빅데이터를 공부합니다.");
+            case "ocr" -> runOcrDemo();
+            case "ocr-nlp" -> {
+                String recognizedText = runOcrDemo();
+                runNlpDemo(recognizedText);
+            }
+            case "student" -> runStudentDemo();
+            default -> throw new IllegalArgumentException(
+                    "지원하지 않는 demo.mode: " + demoMode + " (none, student, ocr, nlp, ocr-nlp)");
+        }
+    }
 
-//        String filePath = "image"; // 문자열을 인식할 이미지 파일 경로
-//        String fileName = "sample01.jpg"; // 문자열을 인식할 이미지 파일 이름
-//
-//        // 전달할 값(Parameter) 약자로 보통 변수명 앞에 p를 붙임 => pDTO
-//        OcrDTO pDTO = new OcrDTO(); // OcrService의 함수에 정보를 전달할 DTO를 메모리에 올리기
-//
-//        pDTO.setFilePath(filePath);
-//        pDTO.setFileName(fileName);
-//
-//        // 실행 결과(Result) 약자로 보통 변수명 앞에 r를 붙임 => rDTO
-//        OcrDTO rDTO = ocrService.getReadforImageText(pDTO);
-//
-//        String result = rDTO.getResult(); // 인식된 문자열
-//
-//        log.info("인식된 문자열");
-//        log.info(result);
-//
-//        log.info("---------------------------------------------------------------------------");
-//        NlpDTO nlpDTO = nlpService.getPlainText(result);
-//        log.info("형태소별 품사 분석 결과 : " + nlpDTO.getResult());
-//
-//        // 명사 추출 결과
-//        nlpDTO = nlpService.getNouns(result);
-//
-//        List<String> nouns = nlpDTO.getNouns(); // 명사 추출결과를 nouns 변수에 저장하기
-//
-//        // 중복을 포함하는 List 구조의 nouns 객체의 값들을 중복제거
-//        // Set 구조는 중복을 허용하지 않기 때문에 List -> Set 구조로 변환하면 자동으로 중복된 값은 제거됨
-//        Set<String> distinct = new HashSet<>(nouns);
-//
-//        log.info("중복 제거 수행 전 단어 수 : " + nouns.size());
-//        log.info("중복 제거 수행 후 단어 수 : " + distinct.size());
-//
-//        // 단어, 빈도수를 Map 구조로 저장하기 위해 객체 생성
-//        // Map 구조의 키는 중복 불가능(값은 중복 가능)
-//        Map<String, Integer> rMap = new HashMap<>();
-//
-//        // 중복제거된 전체 단어마다 반복하기
-//        for (String s : distinct) {
-//            int count = Collections.frequency(nouns, s); // 단어 빈도수
-//            rMap.put(s, count); // 단어, 빈도수를 Map 구조로 저장
-//
-//            log.info(s + " : " + count); // 저장된 결과 출력하기
-//
-//        }
-//
-//        // 빈도수 결과를 정렬하기
-//        // 정렬을 위해 맵에 저장된 레코드 1개(키, 값)을 리스트 구조로 변경하기
-//        List<Map.Entry<String, Integer>> sortResult = new LinkedList<>(rMap.entrySet());
-//
-//        // 저장된 List 결과를 정렬하기
-//        Collections.sort(sortResult, (o1, o2) -> o2.getValue().compareTo(o1.getValue()));
-//
-//        log.info("가장 많이 사용된 단어는? : " + sortResult);
+    private String runOcrDemo() throws Exception {
+        // The example image is bundled in src/main/resources/image.
+        OcrDTO request = new OcrDTO();
+        request.setFilePath("image");
+        request.setFileName("sample01.jpg");
 
-        StudentDTO pDTO; // 학생 등록, 수정, 삭제에 활용될 DTO
-        List<StudentDTO> rList; // DB 조회 결과를 표현
+        OcrDTO response = ocrService.getReadforImageText(request);
+        String recognizedText = response.getResult();
+        log.info("OCR 인식 결과:\n{}", recognizedText);
+        return recognizedText;
+    }
 
-        // 학생 등록하기
-        pDTO = new StudentDTO();
+    private void runNlpDemo(String text) {
+        // Part-of-speech tagging: nouns, verbs, particles and other word classes.
+        NlpDTO tagged = nlpService.getPlainText(text);
+        log.info("형태소/품사 분석 결과: {}", tagged.getResult());
 
-        pDTO.setUserId("hglee67");
-        pDTO.setUserName("이협건");
-        pDTO.setEmail("hglee67@kopo.ac.kr");
-        pDTO.setAddr("서울");
+        // Extract nouns, then count and sort occurrences.
+        NlpDTO analyzed = nlpService.getNouns(text);
+        List<String> nouns = analyzed.getNouns();
+        Map<String, Integer> frequencies = new HashMap<>();
 
-        rList = studentService.insertStudent(pDTO);
+        for (String noun : nouns) {
+            // merge increments the count when the same noun appears again.
+            frequencies.merge(noun, 1, Integer::sum);
+        }
 
-        rList.forEach(dto -> {
-            log.info("DB에 저장된 아이디 : " + dto.getUserId());
-            log.info("DB에 저장된 이름 : " + dto.getUserName());
-            log.info("DB에 저장된 이메일 : " + dto.getEmail());
-            log.info("DB에 저장된 주소 : " + dto.getAddr());
-        });
+        List<Map.Entry<String, Integer>> ranked = new ArrayList<>(frequencies.entrySet());
+        ranked.sort(Map.Entry.<String, Integer>comparingByValue(Comparator.reverseOrder()));
 
-        // 학생 수정하기
-        pDTO = new StudentDTO();
+        log.info("명사 전체 개수: {}, 중복 제외: {}", nouns.size(), frequencies.size());
+        log.info("명사 출현 빈도(내림차순): {}", ranked);
+    }
 
-        pDTO.setUserId("hglee67"); // PK 컬럼인 회원 아이디를 기준으로 데이터를 수정함
-        pDTO.setUserName("이협건_수정");
-        pDTO.setEmail("hglee67@kopo.ac.kr_수정");
-        pDTO.setAddr("서울_수정");
+    private void runStudentDemo() throws Exception {
+        // Use a unique demo ID so the example never edits an existing student's row.
+        String demoId = "demo_" + UUID.randomUUID().toString().substring(0, 8);
+        StudentDTO student = new StudentDTO();
+        student.setUserId(demoId);
+        student.setUserName("실습학생");
+        student.setEmail("student@example.com");
+        student.setAddr("서울");
 
-        rList = studentService.updateStudent(pDTO);
+        log.info("1. 학생 INSERT 후 전체 조회");
+        printStudentList(studentService.insertStudent(student));
 
-        rList.forEach(dto -> {
-            log.info("DB에 저장된 아이디 : " + dto.getUserId());
-            log.info("DB에 저장된 이름 : " + dto.getUserName());
-            log.info("DB에 저장된 이메일 : " + dto.getEmail());
-            log.info("DB에 저장된 주소 : " + dto.getAddr());
-        });
+        student.setUserName("실습학생_수정");
+        student.setAddr("부천");
+        log.info("2. 학생 UPDATE 후 전체 조회");
+        printStudentList(studentService.updateStudent(student));
 
-        // 학생 삭제하기
-        pDTO = new StudentDTO();
+        StudentDTO toDelete = new StudentDTO();
+        toDelete.setUserId(demoId);
+        log.info("3. 학생 DELETE 후 전체 조회");
+        printStudentList(studentService.deleteStudent(toDelete));
+    }
 
-        pDTO.setUserId("hglee67"); // PK 컬럼인 회원 아이디를 기준으로 데이터를 삭제함
-
-        rList = studentService.deleteStudent(pDTO);
-
-        rList.forEach(dto -> {
-            log.info("DB에 저장된 아이디 : " + dto.getUserId());
-            log.info("DB에 저장된 이름 : " + dto.getUserName());
-            log.info("DB에 저장된 이메일 : " + dto.getEmail());
-            log.info("DB에 저장된 주소 : " + dto.getAddr());
-        });
-
-        log.info("자바 프로그래밍 종료!!");
+    private void printStudentList(List<StudentDTO> students) {
+        for (StudentDTO student : students) {
+            log.info("아이디={}, 이름={}, 이메일={}, 주소={}",
+                    student.getUserId(), student.getUserName(),
+                    student.getEmail(), student.getAddr());
+        }
     }
 }
-
