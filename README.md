@@ -1,202 +1,233 @@
-# SpringAIBasic — Spring Boot 4 AI 모델 실습
+# SpringAIBasic — Spring Boot 4 + 한국어 AI 감성분석
 
-Java 17 / Spring Boot 4.1.1에서 **학습된 AI 모델 파일을 읽어 실제 추론(inference)을 실행**하는 콘솔 실습 예제입니다.
+**Java 17 / Spring Boot 4.1.1**로 기존에 학습한 **koSent 긍정·부정 분류 모델**을 호출하는 교육용 프로젝트입니다.
 
-- **AI 모델 분류 실습(신규)**: 붓꽃(Iris) 품종을 구분하는 학습된 `iris-logreg.onnx` 사용
-- **OCR 실습(유지)**: Tesseract / Tess4J로 이미지의 한글 문자 인식
-- **DB 실습(유지)**: MyBatis / Oracle CRUD
-- **KOMORAN 형태소 분석은 제거했습니다.**
-- Spring AI(ChatClient/LLM) 프레임워크를 사용하는 프로젝트가 아닙니다. 여기서 AI는 머신러닝 **ONNX 모델 추론**을 뜻합니다.
+- AI 감성분석: [koSent](https://github.com/Hyeopgeon-Lee/koSent) **Keras TextCNN 모델**에 HTTP/JSON 요청을 보냅니다.
+- OCR: Tesseract/Tess4J로 이미지 안의 한글을 읽는 독립 실습입니다.
+- DB: MyBatis/Oracle로 학생 데이터를 추가·조회·수정·삭제하는 독립 실습입니다.
+- **붓꽃(Iris) ONNX 모델과 KOMORAN 형태소 분석 코드는 제거했습니다.**
 
-## 1. 왜 Iris 모델인가요?
+> **중요:** 이 Spring Boot 저장소는 Keras 모델을 직접 실행하지 않습니다. 별도 실행 중인 **koSent FastAPI**가 Python/TensorFlow로 모델을 로드하고 한국어 전처리 및 추론을 수행합니다. Java는 Spring `RestClient`로 API를 호출하여 실제 모델의 결과를 출력합니다. 따라서 AI 실습을 하려면 koSent 서버를 먼저 실행해야 합니다. 모델을 ONNX로 변환했다고 주장하지 않습니다.
 
-학생들은 API 키, 외부 AI 서버, GPU, 대용량 모델 다운로드 없이 다음을 익힐 수 있습니다.
+## 1. 교육 목표
 
-1. **학습(Training)**: 붓꽃 데이터를 이용해 다중 클래스 로지스틱 회귀 모델을 학습합니다.
-2. **모델 파일(Artifact)**: 학습 결과(가중치와 절편, 계산 그래프)를 `.onnx`로 저장합니다.
-3. **추론(Inference)**: Spring Boot 서비스가 ONNX Runtime으로 모델 파일을 로드합니다.
-4. **입력 특징(Feature)**: 길이·너비 네 숫자를 `float[1][4]` 텐서로 전달합니다.
-5. **예측 결과(Prediction)**: 품종 세 가지의 확률을 출력하고 가장 높은 확률을 가진 품종을 선택합니다.
+1. 텍스트를 수치로 변환하는 전처리와 **TextVectorization**의 역할 이해
+2. 학습(Training), 검증(Evaluation), 추론(Inference)의 구분
+3. Python의 Keras 모델과 Java 기반 Spring Boot의 서비스 분리 구조 이해
+4. Spring Boot 4의 **RestClient**, HTTP POST, JSON 요청과 응답 처리
+5. 모델의 `score`, 긍정/부정 `label` 및 분류 임계값(threshold) 해석
+6. 외부 모델 서버의 오류, 연결 실패, 입력 유효성 검사 처리
 
-모델은 직접 학습된 **실제 머신러닝 모델**이며 단순 if/else 규칙으로 품종을 선택하지 않습니다.
+## 2. 모델: koSent 저장소에 이미 존재
 
-## 2. 환경 및 프로젝트 구조
+[koSent 프로젝트](https://github.com/Hyeopgeon-Lee/koSent)에는 다음 학습 결과가 있습니다.
 
-| 항목 | 설명 |
+| 파일 | 용도 |
 |---|---|
-| Java | JDK 17 이상 |
-| Spring Boot | 4.1.1 |
-| ONNX Runtime | 1.23.0, CPU 추론 |
-| MyBatis | Spring Boot Starter 4.1.0 |
-| Oracle | `ojdbc11` (DB 실습 전용) |
-| Tess4J | 5.2.1 (OCR 실습 전용) |
-| AI 모델 파일 | `src/main/resources/models/iris-logreg.onnx` |
-| 테스트용 DB | H2 (Oracle 설치 불필요) |
+| `model/mySentimentModel.keras` | 약 48.6MB의 학습된 TensorFlow/Keras TextCNN 모델 |
+| `model/eval_meta.json` | 학습·검증 메타 및 권장 임계값 |
+| `serve.py` | FastAPI 웹 API 서버 |
+| `data/ratings.txt` | 한국어 리뷰 학습 데이터 |
+| `ko_sent_model.py` | 모델 재학습 소스코드 |
+
+모델은 `TextVectorization`과 커스텀 한국어 정규화 함수를 포함합니다. Spring Boot에서 모델 파일만 그대로 복사해서 Java 라이브러리로 실행할 수는 없습니다. **이번 실습에서는 기존 Python API가 원래의 전처리·토크나이저 및 학습 가중치를 모두 재사용하도록 구성**했습니다.
+
+모델 평가 자료 `koSent/model/eval_sent.json` (40,242개 검증 샘플):
+
+| 지표 | 값 |
+|---|---:|
+| ROC-AUC | 0.8961 |
+| PR-AUC | 0.8978 |
+| 임계값 0.35일 때 정확도 | 79.20% |
+| 임계값 0.35일 때 F1 | 0.8123 |
+| 임계값 0.50일 때 정확도 | 79.75% |
+| 임계값 0.50일 때 F1 | 0.7830 |
+
+**예측 `score`는 긍정 클래스의 모델 출력값이지 무조건 맞을 확률이나 모델의 전체 정확도가 아닙니다.** `score >= threshold`이면 `pos`, 그렇지 않으면 `neg`입니다. 이 임계값은 koSent의 `eval_meta.json`에서 읽고 `THRESHOLD` 환경변수로 변경할 수 있습니다.
+
+## 3. 시스템 구조
 
 ```text
-src/main/java/kopo/poly/
-├─ SpringAiBasicApplication.java        # CommandLineRunner 실습 모드
-├─ service/impl/IrisInferenceService.java # ONNX 파일 로딩·추론
-├─ service/impl/OcrService.java         # 이미지 문자 인식
-├─ service/impl/StudentService.java     # CRUD
-├─ dto/                                # OCR·학생 정보 DTO
-└─ mapper/                             # MyBatis 인터페이스
-
-src/main/resources/
-├─ models/iris-logreg.onnx             # 사전 학습된 실제 AI 모델
-├─ image/sample01.jpg                 # OCR 테스트 이미지
-├─ mapper/StudentMapper.xml           # 학생 데이터 CRUD SQL
-└─ application.properties              # 설정 및 예제 입력값
-
-scripts/train_iris_model.py            # 모델 재학습 및 ONNX 내보내기
-src/test/java/kopo/poly/
-├─ IrisInferenceServiceTests.java      # 실제 ONNX 모델 추론 테스트
-└─ SpringAiBasicApplicationTests.java  # H2 데이터베이스 CRUD 테스트
+학생이 한국어 문장 입력
+        │
+        ▼
+Spring Boot 4 / Java 17
+ └─ SpringAiBasicApplication
+     └─ KoSentClient (@Service, Spring RestClient)
+           │ HTTP POST /predict
+           │ {"text":"정말 재미있었어요"}
+           ▼
+koSent FastAPI / Python 3.10
+ ├─ TensorFlow / Keras TextVectorization
+ ├─ model/mySentimentModel.keras (학습된 TextCNN)
+ └─ {"label":"pos","score":...}
+           │
+           ▼
+Spring Boot 콘솔에 긍정/부정 및 긍정 점수 출력
 ```
 
-## 3. 빠른 실습 — AI 모델 추론
+**Spring Boot는 API 호출자(클라이언트)**이며, koSent는 모델을 운영하는 API 서버입니다. 모델 다운로드나 학습을 반복하지 않습니다.
 
-**Windows (PowerShell)**
+## 4. 실습 준비 및 실행 (서버 2개 프로세스)
+
+### 단계 A — koSent API 먼저 실행
+
+Python **3.10**을 설치한 후, 별도 터미널에서 실행합니다.
+
+```bash
+git clone https://github.com/Hyeopgeon-Lee/koSent.git
+cd koSent
+
+# Python 3.10의 가상 환경에서 수행하세요.
+python -m pip install -r requirements.txt
+python -X utf8 -m uvicorn serve:app --host 127.0.0.1 --port 8000
+```
+
+다른 Windows 가상환경 명령 예:
 
 ```powershell
-./mvnw.cmd spring-boot:run "-Dspring-boot.run.arguments=--demo.mode=iris"
+py -3.10 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python -X utf8 -m uvicorn serve:app --host 127.0.0.1 --port 8000
+```
+
+실행 여부 확인: [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health) (로컬에서만 접근 가능). `"ok": true`가 나와야 모델 로딩이 완료된 상태입니다.
+
+API 단독 검증 (별도 터미널):
+
+```bash
+curl -X POST http://127.0.0.1:8000/predict -H "Content-Type: application/json" -d '{"text":"정말 재미있는 영화네요"}'
+```
+
+응답 구조: `{"label":"pos","score":0~1 사이 실수,"score_str":"..."}`  
+위의 score 값은 설명을 위한 형식이며, **실제 점수는 모델이 계산**합니다.
+
+### 단계 B — Spring Boot 4 클라이언트 실행
+
+별도 터미널에서 Spring Boot 저장소를 실행합니다.
+
+```bash
+git clone https://github.com/Hyeopgeon-Lee/SpringAIBasic.git
+cd SpringAIBasic
+```
+
+**Windows PowerShell**
+
+```powershell
+./mvnw.cmd spring-boot:run "-Dspring-boot.run.arguments=--demo.mode=sentiment"
 ```
 
 **macOS / Linux**
 
 ```bash
-./mvnw spring-boot:run -Dspring-boot.run.arguments=--demo.mode=iris
+./mvnw spring-boot:run -Dspring-boot.run.arguments=--demo.mode=sentiment
 ```
 
-기본 입력값은 다음과 같습니다.
-
-| 특징(feature) | 값 | 의미 |
-|---|---:|---|
-| sepal-length | 5.1 | 꽃받침 길이(cm) |
-| sepal-width | 3.5 | 꽃받침 너비(cm) |
-| petal-length | 1.4 | 꽃잎 길이(cm) |
-| petal-width | 0.2 | 꽃잎 너비(cm) |
-
-출력은 `setosa`, `versicolor`, `virginica`의 확률과 최종 예측 품종입니다. 모델의 높은 확률은 정답이 보장된다는 의미가 아닙니다.
-
-### 입력값을 바꾸는 실습
+기본 입력 문장은 `정말 재미있고 감동적인 영화였습니다`입니다. 원하는 문장으로 변경할 수도 있습니다.
 
 ```powershell
-./mvnw.cmd spring-boot:run "-Dspring-boot.run.arguments=--demo.mode=iris --iris.sepal-length=6.9 --iris.sepal-width=3.1 --iris.petal-length=5.4 --iris.petal-width=2.1"
+./mvnw.cmd spring-boot:run '-Dspring-boot.run.arguments=--demo.mode=sentiment --sentiment.text=스토리가 지루하고 연기도 아쉬웠어요'
 ```
 
-명령의 수치를 자유롭게 바꾸어 세 품종의 예측 확률이 어떻게 바뀌는지 살펴보세요.
+세 문장을 한 번에 분석하는 배치 예제:
 
-**실습 문항:** 꽃잎 길이 `petal-length`만 1.4 → 4.5 → 5.4로 바꾸면 품종별 확률이 어떻게 달라질까요? 나머지 수치는 동일하게 유지하여 변화 원인을 설명해 보세요.
+```powershell
+./mvnw.cmd spring-boot:run "-Dspring-boot.run.arguments=--demo.mode=sentiment-batch"
+```
 
-## 4. 코드 흐름
+### API 서버 주소를 변경할 때
+
+기본 주소는 `http://127.0.0.1:8000`입니다. 다른 호스트 또는 포트를 사용하려면 `KOSENT_API_URL` 환경변수를 설정합니다.
+
+```powershell
+$env:KOSENT_API_URL = "http://127.0.0.1:8000"
+```
+
+일반 학습 PC에서는 같은 컴퓨터에서 두 프로그램을 실행하도록 권장합니다. 외부에 API를 공개할 경우 접근 제어, TLS, 네트워크 제한이 별도로 필요합니다.
+
+## 5. 코드 핵심 설명
+
+**KoSentClient.java**
 
 ```java
-// Spring에서 @Service로 관리하는 IrisInferenceService
-// 모델은 앱 기동 시 classpath:models/iris-logreg.onnx에서 로드합니다.
-
-var result = irisInferenceService.predict(5.1f, 3.5f, 1.4f, 0.2f);
-System.out.println(result.species());       // 예상: setosa
-System.out.println(result.confidence());    // 가장 높은 예측 확률
-System.out.println(result.probabilities()); // 세 품종의 확률
+// JSON 요청을 작성하고, 모델 서버에서 응답을 역직렬화합니다.
+Prediction result = client.post()
+    .uri("/predict")
+    .contentType(MediaType.APPLICATION_JSON)
+    .body(Map.of("text", "정말 감동적인 영화였습니다"))
+    .retrieve()
+    .body(Prediction.class);
 ```
 
-`IrisInferenceService`에서 수행하는 과정:
+- `@Service`는 Spring이 서비스 객체를 관리한다는 의미입니다.
+- `RestClient.Builder`는 Spring Boot 4의 `spring-boot-starter-restclient`가 제공합니다.
+- `.post()`는 HTTP POST 요청이고, `/predict`는 기존 koSent의 실제 API입니다.
+- `.body(...)`는 JSON 요청 객체를 만들고, `.body(Prediction.class)`는 JSON 응답을 Java record로 변환합니다.
+- `score`는 긍정 점수이며, 임계값 기준 판단은 **koSent 서버**가 수행합니다.
+- 빈 문장과 5,000자 초과 입력은 Java 클라이언트에서 먼저 거부합니다.
 
-1. `ClassPathResource`를 이용해 ONNX 모델 바이트를 읽습니다.
-2. `OrtEnvironment`와 `OrtSession`으로 모델을 메모리에 로드합니다.
-3. 네 개의 입력값을 `OnnxTensor`로 변환합니다.
-4. `session.run(...)`을 호출합니다.
-5. `float[1][3]` 확률을 품종별로 매핑하고 가장 높은 값을 찾습니다.
-6. 텐서와 실행 결과는 `try-with-resources`로 해제하고, 세션은 종료 시 닫습니다.
+**데이터 전달 DTO**
 
-이 과정에는 Python이 필요하지 않습니다. Java 애플리케이션만으로 추론합니다.
+```java
+public record Prediction(
+    String label,
+    Double score,
+    String score_str,
+    Integer index
+) {}
+```
 
-## 5. 모델을 다시 학습하기 (심화)
+단건 응답에는 `index`가 없으므로 `null`이며, 배치 응답에는 입력 순서에 대응하는 정수 `index`가 제공됩니다.
 
-제공된 `iris-logreg.onnx` 모델은 다음과 같이 학습했습니다.
+## 6. 실제 실습에서 주의할 부분
 
-- 데이터: scikit-learn `load_iris()` (총 150개)
-- 알고리즘: 다중 클래스 로지스틱 회귀
-- 학습/검증 분할: 80% / 20%, stratified, `random_state=42`
-- 학습한 분할과 모델로 계산한 검증 정확도: 약 **96.7%** (30개 검증 샘플 중 29개 정답)
-- 모델 출력: 확률이 합계 약 1이 되는 `[1,3]` 텐서
+- Java에서 `koSent/model/mySentimentModel.keras`를 직접 여는 코드는 없습니다. **이것은 Python API 연동 방식**입니다.
+- 저장소의 원래 `custom_standardize`와 `TextVectorization` 동작을 유지하므로 Java 자체 전처리에서 생길 수 있는 불일치를 피합니다.
+- `0.35`는 koSent 모델이 평가에서 선택한 F1 임계값이며, 점수를 무조건 0.5 이상일 때 긍정으로 판단하면 원래의 API와 결과가 달라질 수 있습니다.
+- 원본 koSent 실행에는 Python 3.10과 TensorFlow 의존성 설치가 필요합니다.
+- 단순 `SpringAIBasic` 빌드·테스트에는 koSent 서버가 필요하지 않습니다.
 
-다른 데이터 분할, 모델, scikit-learn 버전에서는 정확도가 달라질 수 있습니다.
-
-Python으로 학습부터 직접 따라 하려면:
+## 7. 테스트 및 검증
 
 ```bash
-python -m pip install scikit-learn numpy onnx
-python scripts/train_iris_model.py
-```
-
-스크립트가 동일한 경로에 ONNX 모델을 다시 저장합니다. 변경한 파일은 Git에 반영하기 전에 테스트하세요. **Python은 재학습 때만 필요**합니다.
-
-## 6. OCR 실습 (별도 예제)
-
-```powershell
-./mvnw.cmd spring-boot:run "-Dspring-boot.run.arguments=--demo.mode=ocr"
-```
-
-`src/main/resources/image/sample01.jpg`에서 한글 텍스트를 인식합니다. 별도로 설치하거나 내려받은 `kor.traineddata`를 포함하는 디렉터리를 `OCR_TESSDATA_PATH` 환경변수로 지정하세요.
-
-예: Windows에서는 `C:/model/tessdata/kor.traineddata`가 존재한다면 `OCR_TESSDATA_PATH=C:/model/tessdata`로 설정합니다. 기존의 고정 경로 사용을 제거했습니다.
-
-**OCR은 이미지에서 글자를 추출하는 예제이고, Iris는 학습된 모델을 사용하는 분류 예제입니다. 서로 다른 실습입니다.**
-
-## 7. MyBatis / Oracle 학생 CRUD (별도 예제)
-
-```sql
-CREATE TABLE STUDENT (
-    USER_ID   VARCHAR2(100) PRIMARY KEY,
-    USER_NAME VARCHAR2(100),
-    EMAIL     VARCHAR2(200),
-    ADDR      VARCHAR2(200)
-);
-```
-
-Windows PowerShell 환경변수 설정 및 실행:
-
-```powershell
-$env:DB_URL = "jdbc:oracle:thin:@127.0.0.1:1521/xe"
-$env:DB_USERNAME = "poly"
-$env:DB_PASSWORD = "본인의_DB_비밀번호"
-./mvnw.cmd spring-boot:run "-Dspring-boot.run.arguments=--demo.mode=student"
-```
-
-MyBatis의 `IStudentMapper` 메서드는 `StudentMapper.xml`의 동일한 `id`에 매핑됩니다. `#{userId}`와 같은 바인딩 방식으로 쿼리 매개변수를 전달합니다. 실습에서는 `demo_...` 고유 학생 ID로만 새 데이터를 만들고 수정·삭제합니다. 운영 DB가 아닌 실습 DB를 사용하세요.
-
-## 8. 테스트
-
-```bash
-# Windows
-./mvnw.cmd clean verify
-
-# macOS / Linux
 ./mvnw clean verify
 ```
 
-- `IrisInferenceServiceTests`: 실제 모델 파일을 ONNX Runtime으로 읽고 품종 세 개의 추론 결과, 확률 합계, 잘못된 입력을 테스트합니다.
-- `SpringAiBasicApplicationTests`: H2 DB를 사용해 MyBatis XML의 INSERT/SELECT/UPDATE/DELETE를 검증합니다.
-- GitHub Actions가 JDK 17로 `verify`를 수행합니다.
+Windows는 `./mvnw.cmd clean verify`를 실행하세요.
 
-> 추론에 CPU용 ONNX Runtime의 네이티브 라이브러리를 사용합니다. 지원 플랫폼과 아키텍처를 확인하세요. 모델 파일은 작지만 처음 Maven 의존성을 설치할 때 ONNX Runtime 라이브러리 다운로드는 별도로 필요합니다.
+- `KoSentClientTests`: 실제 HTTP 요청/JSON 응답을 **로컬 테스트 서버로 모의**하여 긍정·부정 응답, 배치 순서, 입력값 검증을 테스트합니다.
+- `SpringAiBasicApplicationTests`: H2 메모리 DB에서 MyBatis SQL CRUD를 검증합니다.
+- GitHub Actions가 JDK 17 환경에서 `mvn verify`를 실행합니다.
 
-## 9. 학생 과제
+**구분해야 할 점:** Java의 HTTP API 테스트가 통과하는 것과 실제 Python Keras 모델을 실행해서 긍정·부정 결과가 정상적으로 출력되는 것은 별개의 검증입니다. 실제 모델을 이용한 전체 시스템 검증은 양쪽 프로그램을 실행한 뒤 수행해야 합니다.
 
-1. 꽃받침 길이는 고정하고 꽃잎 길이를 바꿔 품종별 확률 그래프를 작성합니다.
-2. `sepal-length` / `petal-width` 순서를 바꿨을 때 결과가 왜 틀리는지 설명합니다.
-3. `float[1][4]` 입력과 `float[1][3]` 출력 형태를 설명합니다.
-4. `train_iris_model.py`의 학습·검증 비율을 변경해 정확도를 비교합니다.
-5. 과적합, 과소적합, 학습 데이터와 추론 데이터의 차이를 조사합니다.
+## 8. 확장 과제
 
-## 참고
+1. 같은 문장의 긍정 점수와 `label`을 저장하고, 문장별 차이를 설명합니다.
+2. `THRESHOLD`를 0.35에서 0.5로 변경하여 결과를 비교합니다.
+3. 비슷한 의미의 존댓말과 반말 문장을 분석해 모델의 표현 민감도를 확인합니다.
+4. 긍정·부정 단어가 동시에 있는 문장을 넣고 모델의 오분류 원인을 조사합니다.
+5. Java의 HTTP 예외 처리 및 koSent 서버 장애 시 사용자에게 적절한 오류를 보여주는 기능을 구현합니다.
 
-- [ONNX Runtime Java 공식 문서](https://onnxruntime.ai/docs/get-started/with-java.html)
-- [Spring Boot 공식 문서](https://docs.spring.io/spring-boot/reference/)
-- [scikit-learn Iris 데이터셋](https://scikit-learn.org/stable/auto_examples/datasets/plot_iris_dataset.html)
-- [Tess4J](https://github.com/nguyenq/tess4j)
+## 9. 함께 제공되는 기존 실습
 
-한국폴리텍대학 서울강서캠퍼스 빅데이터소프트웨어공학과  
+| 모드 | 기능 | 준비사항 |
+|---|---|---|
+| `none` | 기본 애플리케이션 기동 | Java 17 |
+| `sentiment` | 한국어 1문장 긍정·부정 예측 | koSent FastAPI 실행 |
+| `sentiment-batch` | 한국어 3문장 배치 예측 | koSent FastAPI 실행 |
+| `ocr` | `sample01.jpg` 문자 인식 | Tesseract `kor.traineddata` |
+| `student` | MyBatis Oracle CRUD | Oracle DB 및 STUDENT 테이블 |
+
+학생 CRUD / OCR 실습 설정은 기존 README 구성과 같습니다. 보안상 DB 비밀번호는 `DB_PASSWORD` 환경변수로 설정하고 운영 DB 대신 실습 DB를 사용합니다.
+
+## 참고 문서
+
+- [koSent 학습 모델 및 FastAPI 저장소](https://github.com/Hyeopgeon-Lee/koSent)
+- [Spring Boot 4 공식 REST 클라이언트 문서](https://docs.spring.io/spring-boot/reference/io/rest-client.html)
+- [FastAPI](https://fastapi.tiangolo.com/)
+- [TensorFlow/Keras](https://www.tensorflow.org/guide/keras)
+
+한국폴리텍대학 서울강서캠퍼스 **빅데이터소프트웨어공학과**  
 문의: hglee67@kopo.ac.kr
