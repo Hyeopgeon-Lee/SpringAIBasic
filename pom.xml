@@ -3,7 +3,6 @@
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
-
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
@@ -15,28 +14,19 @@
     <artifactId>SpringAIBasic</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>SpringAIBasic</name>
-    <description>Spring Boot 4 console examples: OCR, Korean NLP, and MyBatis CRUD</description>
+    <description>Spring Boot 4 console demos: ONNX Iris AI inference, OCR and MyBatis CRUD</description>
 
     <properties>
         <java.version>17</java.version>
+        <onnxruntime.version>1.23.0</onnxruntime.version>
     </properties>
 
-    <!-- KOMORAN 3.3.4 is distributed through JitPack. -->
-    <repositories>
-        <repository>
-            <id>jitpack.io</id>
-            <url>https://jitpack.io</url>
-        </repository>
-    </repositories>
-
     <dependencies>
-        <!-- Core Spring Boot application (no web server required). -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter</artifactId>
         </dependency>
 
-        <!-- The 4.1.x MyBatis starter is compatible with Spring Boot 4.1.x. -->
         <dependency>
             <groupId>org.mybatis.spring.boot</groupId>
             <artifactId>mybatis-spring-boot-starter</artifactId>
@@ -49,12 +39,14 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- ONNX Runtime executes the included trained Iris classification model on CPU. -->
         <dependency>
-            <groupId>com.github.shin285</groupId>
-            <artifactId>KOMORAN</artifactId>
-            <version>3.3.4</version>
+            <groupId>com.microsoft.onnxruntime</groupId>
+            <artifactId>onnxruntime</artifactId>
+            <version>${onnxruntime.version}</version>
         </dependency>
 
+        <!-- Tesseract OCR is a separate optional exercise. -->
         <dependency>
             <groupId>net.sourceforge.tess4j</groupId>
             <artifactId>tess4j</artifactId>
@@ -84,7 +76,6 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
-        <!-- Integration tests use H2 so no external Oracle server is needed. -->
         <dependency>
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>

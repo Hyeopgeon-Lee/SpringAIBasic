@@ -1,120 +1,151 @@
-# SpringAIBasic — Spring Boot 4 실습
+# SpringAIBasic — Spring Boot 4 AI 모델 실습
 
-**Java 17 + Spring Boot 4.1.1 + MyBatis 4.1.0** 기반의 콘솔 실습 저장소입니다. Java와 Spring의 의존성 주입, 한국어 자연어 처리(NLP), 이미지 문자 인식(OCR), SQL 매퍼 기반 CRUD를 단계적으로 익힙니다.
+Java 17 / Spring Boot 4.1.1에서 **학습된 AI 모델 파일을 읽어 실제 추론(inference)을 실행**하는 콘솔 실습 예제입니다.
 
-> **프로젝트 이름과 실제 기능의 차이:** 현재 코드는 Spring AI(ChatClient, LLM, RAG)를 이용하지 않습니다. 이 프로젝트의 AI 예제는 **KOMORAN 형태소 분석**과 **Tesseract OCR**입니다. 생성형 AI를 실습하려면 Spring AI 관련 의존성과 예제를 별도로 추가해야 합니다.
+- **AI 모델 분류 실습(신규)**: 붓꽃(Iris) 품종을 구분하는 학습된 `iris-logreg.onnx` 사용
+- **OCR 실습(유지)**: Tesseract / Tess4J로 이미지의 한글 문자 인식
+- **DB 실습(유지)**: MyBatis / Oracle CRUD
+- **KOMORAN 형태소 분석은 제거했습니다.**
+- Spring AI(ChatClient/LLM) 프레임워크를 사용하는 프로젝트가 아닙니다. 여기서 AI는 머신러닝 **ONNX 모델 추론**을 뜻합니다.
 
-## 1. 학습 목표
+## 1. 왜 Iris 모델인가요?
 
-1. `@SpringBootApplication`, `@Service`, 인터페이스, 생성자 주입의 역할을 설명합니다.
-2. DTO를 만들어 서비스 메서드에 데이터를 전달하고 결과를 받습니다.
-3. KOMORAN으로 형태소 품사를 분석하고 명사를 추출하여 빈도를 계산합니다.
-4. Tesseract로 이미지의 한글을 인식하고 NLP 입력값으로 활용합니다.
-5. MyBatis Mapper 인터페이스와 XML의 `id`가 어떻게 연결되는지 설명합니다.
-6. `INSERT`, `SELECT`, `UPDATE`, `DELETE`를 실행하고 결과를 확인합니다.
+학생들은 API 키, 외부 AI 서버, GPU, 대용량 모델 다운로드 없이 다음을 익힐 수 있습니다.
 
-## 2. 개발 환경 및 기술 스택
+1. **학습(Training)**: 붓꽃 데이터를 이용해 다중 클래스 로지스틱 회귀 모델을 학습합니다.
+2. **모델 파일(Artifact)**: 학습 결과(가중치와 절편, 계산 그래프)를 `.onnx`로 저장합니다.
+3. **추론(Inference)**: Spring Boot 서비스가 ONNX Runtime으로 모델 파일을 로드합니다.
+4. **입력 특징(Feature)**: 길이·너비 네 숫자를 `float[1][4]` 텐서로 전달합니다.
+5. **예측 결과(Prediction)**: 품종 세 가지의 확률을 출력하고 가장 높은 확률을 가진 품종을 선택합니다.
 
-| 항목 | 버전·설명 |
-| --- | --- |
-| JDK | Java 17 이상 |
+모델은 직접 학습된 **실제 머신러닝 모델**이며 단순 if/else 규칙으로 품종을 선택하지 않습니다.
+
+## 2. 환경 및 프로젝트 구조
+
+| 항목 | 설명 |
+|---|---|
+| Java | JDK 17 이상 |
 | Spring Boot | 4.1.1 |
-| Maven | 3.9.6 (저장소 Maven Wrapper 제공) |
-| MyBatis Spring Boot Starter | 4.1.0 |
-| Oracle JDBC | `ojdbc11` (Spring Boot BOM에서 버전 관리) |
-| KOMORAN | 3.3.4 (JitPack) |
-| Tess4J | 5.2.1 |
-| Lombok | DTO getter/setter 및 생성자·로깅 |
-| 테스트 DB | H2 (테스트에서만 사용, Oracle 모드) |
-
-**Spring Boot 4 호환성:** 기존 프로젝트의 Spring Boot 3.2.5 / MyBatis 3.0.3을 Spring Boot 4.1.1 / MyBatis 4.1.0으로 변경했습니다. MyBatis 3.x Starter를 Boot 4와 혼용하지 마세요. 기존 Oracle DB와 SQL Mapper는 유지됩니다.
-
-## 3. 디렉터리 구조
+| ONNX Runtime | 1.23.0, CPU 추론 |
+| MyBatis | Spring Boot Starter 4.1.0 |
+| Oracle | `ojdbc11` (DB 실습 전용) |
+| Tess4J | 5.2.1 (OCR 실습 전용) |
+| AI 모델 파일 | `src/main/resources/models/iris-logreg.onnx` |
+| 테스트용 DB | H2 (Oracle 설치 불필요) |
 
 ```text
-src/
-├─ main/
-│  ├─ java/kopo/poly/
-│  │  ├─ SpringAiBasicApplication.java    # 콘솔 실습 선택 및 실행
-│  │  ├─ dto/                             # StudentDTO, NlpDTO, OcrDTO
-│  │  ├─ mapper/IStudentMapper.java       # Mapper 메서드 선언
-│  │  ├─ service/                         # Service 인터페이스
-│  │  └─ service/impl/                    # 실제 처리 로직
-│  └─ resources/
-│     ├─ application.properties           # 환경변수·MyBatis 설정
-│     ├─ image/sample01.jpg               # OCR 실습 이미지
-│     └─ mapper/StudentMapper.xml         # SQL 매핑
-└─ test/
-   ├─ java/kopo/poly/SpringAiBasicApplicationTests.java
-   └─ resources/schema.sql                # H2 테스트 테이블
+src/main/java/kopo/poly/
+├─ SpringAiBasicApplication.java        # CommandLineRunner 실습 모드
+├─ service/impl/IrisInferenceService.java # ONNX 파일 로딩·추론
+├─ service/impl/OcrService.java         # 이미지 문자 인식
+├─ service/impl/StudentService.java     # CRUD
+├─ dto/                                # OCR·학생 정보 DTO
+└─ mapper/                             # MyBatis 인터페이스
+
+src/main/resources/
+├─ models/iris-logreg.onnx             # 사전 학습된 실제 AI 모델
+├─ image/sample01.jpg                 # OCR 테스트 이미지
+├─ mapper/StudentMapper.xml           # 학생 데이터 CRUD SQL
+└─ application.properties              # 설정 및 예제 입력값
+
+scripts/train_iris_model.py            # 모델 재학습 및 ONNX 내보내기
+src/test/java/kopo/poly/
+├─ IrisInferenceServiceTests.java      # 실제 ONNX 모델 추론 테스트
+└─ SpringAiBasicApplicationTests.java  # H2 데이터베이스 CRUD 테스트
 ```
 
-## 4. 기본 실행 — 데이터베이스 수정 없음
+## 3. 빠른 실습 — AI 모델 추론
+
+**Windows (PowerShell)**
+
+```powershell
+./mvnw.cmd spring-boot:run "-Dspring-boot.run.arguments=--demo.mode=iris"
+```
+
+**macOS / Linux**
 
 ```bash
-# Windows
-mvnw.cmd spring-boot:run
-
-# macOS / Linux
-./mvnw spring-boot:run
+./mvnw spring-boot:run -Dspring-boot.run.arguments=--demo.mode=iris
 ```
 
-기본 `demo.mode=none` 이므로 학생 정보 추가·삭제나 OCR 작업을 자동으로 실행하지 않습니다. **모드는 한 번에 하나씩 지정합니다.**
+기본 입력값은 다음과 같습니다.
+
+| 특징(feature) | 값 | 의미 |
+|---|---:|---|
+| sepal-length | 5.1 | 꽃받침 길이(cm) |
+| sepal-width | 3.5 | 꽃받침 너비(cm) |
+| petal-length | 1.4 | 꽃잎 길이(cm) |
+| petal-width | 0.2 | 꽃잎 너비(cm) |
+
+출력은 `setosa`, `versicolor`, `virginica`의 확률과 최종 예측 품종입니다. 모델의 높은 확률은 정답이 보장된다는 의미가 아닙니다.
+
+### 입력값을 바꾸는 실습
+
+```powershell
+./mvnw.cmd spring-boot:run "-Dspring-boot.run.arguments=--demo.mode=iris --iris.sepal-length=6.9 --iris.sepal-width=3.1 --iris.petal-length=5.4 --iris.petal-width=2.1"
+```
+
+명령의 수치를 자유롭게 바꾸어 세 품종의 예측 확률이 어떻게 바뀌는지 살펴보세요.
+
+**실습 문항:** 꽃잎 길이 `petal-length`만 1.4 → 4.5 → 5.4로 바꾸면 품종별 확률이 어떻게 달라질까요? 나머지 수치는 동일하게 유지하여 변화 원인을 설명해 보세요.
+
+## 4. 코드 흐름
+
+```java
+// Spring에서 @Service로 관리하는 IrisInferenceService
+// 모델은 앱 기동 시 classpath:models/iris-logreg.onnx에서 로드합니다.
+
+var result = irisInferenceService.predict(5.1f, 3.5f, 1.4f, 0.2f);
+System.out.println(result.species());       // 예상: setosa
+System.out.println(result.confidence());    // 가장 높은 예측 확률
+System.out.println(result.probabilities()); // 세 품종의 확률
+```
+
+`IrisInferenceService`에서 수행하는 과정:
+
+1. `ClassPathResource`를 이용해 ONNX 모델 바이트를 읽습니다.
+2. `OrtEnvironment`와 `OrtSession`으로 모델을 메모리에 로드합니다.
+3. 네 개의 입력값을 `OnnxTensor`로 변환합니다.
+4. `session.run(...)`을 호출합니다.
+5. `float[1][3]` 확률을 품종별로 매핑하고 가장 높은 값을 찾습니다.
+6. 텐서와 실행 결과는 `try-with-resources`로 해제하고, 세션은 종료 시 닫습니다.
+
+이 과정에는 Python이 필요하지 않습니다. Java 애플리케이션만으로 추론합니다.
+
+## 5. 모델을 다시 학습하기 (심화)
+
+제공된 `iris-logreg.onnx` 모델은 다음과 같이 학습했습니다.
+
+- 데이터: scikit-learn `load_iris()` (총 150개)
+- 알고리즘: 다중 클래스 로지스틱 회귀
+- 학습/검증 분할: 80% / 20%, stratified, `random_state=42`
+- 학습한 분할과 모델로 계산한 검증 정확도: 약 **96.7%** (30개 검증 샘플 중 29개 정답)
+- 모델 출력: 확률이 합계 약 1이 되는 `[1,3]` 텐서
+
+다른 데이터 분할, 모델, scikit-learn 버전에서는 정확도가 달라질 수 있습니다.
+
+Python으로 학습부터 직접 따라 하려면:
 
 ```bash
-# Windows — 형태소 분석
-mvnw.cmd spring-boot:run "-Dspring-boot.run.arguments=--demo.mode=nlp"
-
-# macOS / Linux — 형태소 분석
-./mvnw spring-boot:run -Dspring-boot.run.arguments=--demo.mode=nlp
+python -m pip install scikit-learn numpy onnx
+python scripts/train_iris_model.py
 ```
 
-실행 가능 모드:
+스크립트가 동일한 경로에 ONNX 모델을 다시 저장합니다. 변경한 파일은 Git에 반영하기 전에 테스트하세요. **Python은 재학습 때만 필요**합니다.
 
-| 모드 | 기능 | 준비사항 |
-| --- | --- | --- |
-| `none` | Spring 애플리케이션 기동만 확인 | JDK |
-| `nlp` | 예제 문장의 형태소 분석 및 명사 빈도 계산 | JDK |
-| `ocr` | `sample01.jpg`에서 한글 텍스트 추출 | 한글 Tesseract 학습 데이터 |
-| `ocr-nlp` | OCR 인식 텍스트를 KOMORAN으로 분석 | Tesseract 학습 데이터 |
-| `student` | Oracle 학생 데이터 등록 → 수정 → 삭제 | Oracle DB와 STUDENT 테이블 |
+## 6. OCR 실습 (별도 예제)
 
-모드는 환경변수 `DEMO_MODE`로 설정하거나 명령 인자 `--demo.mode=...`로 덮어쓸 수 있습니다.
-
-### NLP 실습 흐름
-
-```java
-NlpDTO tagged = nlpService.getPlainText("빅데이터를 공부합니다.");
-NlpDTO result = nlpService.getNouns("빅데이터를 공부합니다.");
-List<String> nouns = result.getNouns();
+```powershell
+./mvnw.cmd spring-boot:run "-Dspring-boot.run.arguments=--demo.mode=ocr"
 ```
 
-- `getPlainText()`: 형태소 분리 후 품사 태깅 결과를 문자열로 반환합니다.
-- `getNouns()`: 일반 명사(NNG), 고유 명사(NNP) 등을 추출하여 `List<String>`으로 반환합니다.
-- `Map.merge(noun, 1, Integer::sum)`: 같은 명사가 다시 나올 때 빈도를 1 증가시킵니다.
-- `comparingByValue(reverseOrder())`: 추출한 명사를 사용 빈도 내림차순으로 출력합니다.
+`src/main/resources/image/sample01.jpg`에서 한글 텍스트를 인식합니다. 별도로 설치하거나 내려받은 `kor.traineddata`를 포함하는 디렉터리를 `OCR_TESSDATA_PATH` 환경변수로 지정하세요.
 
-**확인 질문:** `List`가 중복 단어를 보관하지만 `Map`의 키는 중복되지 않는 이유는 무엇일까요?
+예: Windows에서는 `C:/model/tessdata/kor.traineddata`가 존재한다면 `OCR_TESSDATA_PATH=C:/model/tessdata`로 설정합니다. 기존의 고정 경로 사용을 제거했습니다.
 
-### OCR 실습 흐름
+**OCR은 이미지에서 글자를 추출하는 예제이고, Iris는 학습된 모델을 사용하는 분류 예제입니다. 서로 다른 실습입니다.**
 
-```java
-OcrDTO dto = new OcrDTO();
-dto.setFilePath("image");
-dto.setFileName("sample01.jpg");
-String text = ocrService.getReadforImageText(dto).getResult();
-```
-
-1. `ClassPathResource`로 `resources/image/sample01.jpg`를 읽습니다.
-2. `ImageIO.read(InputStream)`으로 `BufferedImage`를 만듭니다. `getFile()`과 달리 실행 JAR 내부의 리소스에서도 동작합니다.
-3. Tesseract에서 `kor` 언어를 지정하여 문자 인식을 수행합니다.
-4. 반환한 문자열을 KOMORAN에 전달하면 OCR → NLP 실습으로 이어집니다.
-
-**OCR 준비:** Tesseract의 `kor.traineddata`를 모델 경로에 내려받으세요. 기본 경로는 Windows의 `C:/model/tessdata/kor.traineddata`입니다. 다른 OS에서는 `OCR_TESSDATA_PATH` 환경변수를 `kor.traineddata`가 실제로 들어 있는 디렉터리로 설정하세요. 예를 들어 Linux의 경우 `/usr/share/tesseract-ocr/5/tessdata`일 수 있습니다. 정확한 위치는 설치 환경에 따라 다릅니다. **OCR/NLP 라이브러리를 구동하는 데 OpenAI API 키는 필요하지 않습니다.**
-
-## 5. Oracle DB와 MyBatis CRUD
-
-학생 CRUD 모드는 Oracle 접속 및 아래 테이블 생성이 필요합니다.
+## 7. MyBatis / Oracle 학생 CRUD (별도 예제)
 
 ```sql
 CREATE TABLE STUDENT (
@@ -125,17 +156,7 @@ CREATE TABLE STUDENT (
 );
 ```
 
-애플리케이션은 다음 환경변수로 DB 정보를 읽습니다. **비밀번호를 GitHub에 커밋하지 마세요.**
-
-| 환경변수 | 기본값 | 의미 |
-| --- | --- | --- |
-| `DB_URL` | `jdbc:oracle:thin:@127.0.0.1:1521/xe` | Oracle JDBC URL |
-| `DB_USERNAME` | `poly` | 계정 이름 |
-| `DB_PASSWORD` | 비어 있음 | 계정 비밀번호 |
-| `DEMO_MODE` | `none` | 실행 예제 선택 |
-| `OCR_TESSDATA_PATH` | `C:/model/tessdata` | Tesseract 언어 모델 폴더 |
-
-Windows PowerShell 예시:
+Windows PowerShell 환경변수 설정 및 실행:
 
 ```powershell
 $env:DB_URL = "jdbc:oracle:thin:@127.0.0.1:1521/xe"
@@ -144,61 +165,38 @@ $env:DB_PASSWORD = "본인의_DB_비밀번호"
 ./mvnw.cmd spring-boot:run "-Dspring-boot.run.arguments=--demo.mode=student"
 ```
 
-매번 실행할 때 `demo_<랜덤문자>`라는 고유 학생 ID를 만들어 실습 데이터를 추가·수정·삭제합니다. **다른 학생의 기존 레코드를 대상으로 수정하거나 삭제하지 않습니다.** 다만 DB 전체 조회 로그에는 실제 데이터가 포함될 수 있으므로 운영 DB 대신 실습 DB에서 실행하세요.
+MyBatis의 `IStudentMapper` 메서드는 `StudentMapper.xml`의 동일한 `id`에 매핑됩니다. `#{userId}`와 같은 바인딩 방식으로 쿼리 매개변수를 전달합니다. 실습에서는 `demo_...` 고유 학생 ID로만 새 데이터를 만들고 수정·삭제합니다. 운영 DB가 아닌 실습 DB를 사용하세요.
 
-### Java 메서드와 MyBatis XML의 연결
-
-```java
-// IStudentMapper.java
-void insertStudent(StudentDTO pDTO) throws Exception;
-```
-
-```xml
-<!-- StudentMapper.xml -->
-<insert id="insertStudent" parameterType="StudentDTO">
-    INSERT INTO STUDENT (USER_ID, USER_NAME, EMAIL, ADDR)
-    VALUES (#{userId}, #{userName}, #{email}, #{addr})
-</insert>
-```
-
-- Java 인터페이스의 `insertStudent`와 XML의 `id="insertStudent"`가 일치해야 합니다.
-- `#{userId}`는 `StudentDTO.getUserId()`의 값으로 바인딩합니다. 문자열을 SQL에 그대로 붙이는 방식보다 안전합니다.
-- `namespace="kopo.poly.mapper.IStudentMapper"`는 Mapper 인터페이스의 전체 이름입니다.
-- `map-underscore-to-camel-case=true`를 통해 DB의 `USER_NAME`을 Java의 `userName`에 매핑합니다.
-
-**확인 질문:** SQL의 `#{userId}`와 `${userId}`는 어떻게 다르며, 사용자 입력을 SQL 문자열에 직접 결합하면 어떤 문제가 생길까요?
-
-## 6. 테스트 및 오류 확인
+## 8. 테스트
 
 ```bash
 # Windows
-mvnw.cmd clean verify
+./mvnw.cmd clean verify
 
 # macOS / Linux
 ./mvnw clean verify
 ```
 
-`SpringAiBasicApplicationTests`는 H2 메모리 DB에 `STUDENT` 테이블을 만든 후, **실제 MyBatis XML 매퍼의 INSERT → SELECT → UPDATE → DELETE 동작**을 확인합니다. 별도의 Oracle 설치 없이 실행할 수 있습니다. GitHub Actions에서도 JDK 17로 `verify`를 실행하도록 설정했습니다.
+- `IrisInferenceServiceTests`: 실제 모델 파일을 ONNX Runtime으로 읽고 품종 세 개의 추론 결과, 확률 합계, 잘못된 입력을 테스트합니다.
+- `SpringAiBasicApplicationTests`: H2 DB를 사용해 MyBatis XML의 INSERT/SELECT/UPDATE/DELETE를 검증합니다.
+- GitHub Actions가 JDK 17로 `verify`를 수행합니다.
 
-**참고:** H2 테스트가 성공하더라도 실습 PC의 Oracle 접속 정보, 서버 권한, Tesseract 네이티브 라이브러리·학습 데이터까지 자동 검증되는 것은 아닙니다. 해당 기능은 각 실습 환경에서 별도 확인해야 합니다.
+> 추론에 CPU용 ONNX Runtime의 네이티브 라이브러리를 사용합니다. 지원 플랫폼과 아키텍처를 확인하세요. 모델 파일은 작지만 처음 Maven 의존성을 설치할 때 ONNX Runtime 라이브러리 다운로드는 별도로 필요합니다.
 
-## 7. 학생 실습 과제
+## 9. 학생 과제
 
-1. `nlp` 모드의 문장을 자유롭게 바꾸고 형태소와 명사 빈도 변화 비교하기.
-2. OCR 이미지에서 한글 문장을 바꿔 `ocr-nlp`를 실행하고 인식 결과 분석하기.
-3. `StudentDTO`에 `phone` 속성을 추가하고, DB 테이블·Mapper XML·서비스를 함께 변경하기.
-4. Mapper XML의 `ORDER BY USER_NAME DESC`를 변경하여 정렬 순서가 바뀌는지 확인하기.
-5. 예외가 발생했을 때 DB 실습 데이터가 남지 않도록 트랜잭션을 개선해 보기.
+1. 꽃받침 길이는 고정하고 꽃잎 길이를 바꿔 품종별 확률 그래프를 작성합니다.
+2. `sepal-length` / `petal-width` 순서를 바꿨을 때 결과가 왜 틀리는지 설명합니다.
+3. `float[1][4]` 입력과 `float[1][3]` 출력 형태를 설명합니다.
+4. `train_iris_model.py`의 학습·검증 비율을 변경해 정확도를 비교합니다.
+5. 과적합, 과소적합, 학습 데이터와 추론 데이터의 차이를 조사합니다.
 
-## 8. 참고 자료
+## 참고
 
+- [ONNX Runtime Java 공식 문서](https://onnxruntime.ai/docs/get-started/with-java.html)
 - [Spring Boot 공식 문서](https://docs.spring.io/spring-boot/reference/)
-- [Spring Boot 4 마이그레이션 가이드](https://github.com/spring-projects/spring-boot/wiki/Spring-Boot-4.0-Migration-Guide)
-- [MyBatis Spring Boot Starter](https://mybatis.org/spring-boot-starter/mybatis-spring-boot-autoconfigure/)
-- [KOMORAN](https://github.com/shineware/KOMORAN)
+- [scikit-learn Iris 데이터셋](https://scikit-learn.org/stable/auto_examples/datasets/plot_iris_dataset.html)
 - [Tess4J](https://github.com/nguyenq/tess4j)
 
-## 문의
-
-한국폴리텍대학 서울강서캠퍼스 **빅데이터소프트웨어공학과**  
-이협건 교수 · hglee67@kopo.ac.kr
+한국폴리텍대학 서울강서캠퍼스 빅데이터소프트웨어공학과  
+문의: hglee67@kopo.ac.kr
