@@ -39,7 +39,11 @@ class IrisInferenceServiceTests {
     }
 
     private static class CloseableIrisModel implements AutoCloseable {
-        final IrisInferenceService service = new IrisInferenceService();
+        final IrisInferenceService service;
+
+        CloseableIrisModel() throws Exception {
+            service = new IrisInferenceService();
+        }
 
         @Override
         public void close() throws Exception {
